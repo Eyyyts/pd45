@@ -64,7 +64,8 @@ class PlateRecognizer:
             vehicle_type VARCHAR(50),
             face_image_path VARCHAR(255),
             face_name VARCHAR(255),
-            is_complete_record BOOLEAN DEFAULT FALSE
+            is_complete_record BOOLEAN DEFAULT FALSE,
+            security_match BOOLEAN DEFAULT TRUE
         )''')
         self.conn.commit()
 
@@ -188,7 +189,7 @@ class PlateRecognizer:
                     return True
         return False
 
-    def save_to_db(self, plate_text, car_color, location, vehicle_type, face_image_path, face_name):
+    def save_to_db(self, plate_text, car_color, location, vehicle_type, face_image_path, face_name, security_match=True):
         try:
             # Ensure a valid database connection
             if not self.ensure_db_connection():
@@ -210,10 +211,11 @@ class PlateRecognizer:
                             face_image_path, 
                             face_name, 
                             date_time_scanned,
-                            is_complete_record
-                        ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), TRUE)
+                            is_complete_record,
+                            security_match
+                        ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), TRUE, %s)
                     """, (str(plate_text), str(car_color), str(location), 
-                        str(vehicle_type), str(face_image_path), str(face_name)))
+                        str(vehicle_type), str(face_image_path), str(face_name), security_match))
                     
                     self.conn.commit()
                     print(f"✅ Complete record saved to DB: {plate_text} | Color: {car_color} | Type: {vehicle_type} | Face: {face_name}")
@@ -228,10 +230,11 @@ class PlateRecognizer:
                             face_image_path = %s, 
                             face_name = %s, 
                             date_time_scanned = NOW(),
-                            is_complete_record = TRUE
+                            is_complete_record = TRUE,
+                            security_match = %s
                         WHERE plate_number = %s
                     """, (str(car_color), str(location), str(vehicle_type), 
-                        str(face_image_path), str(face_name), str(plate_text)))
+                        str(face_image_path), str(face_name), security_match, str(plate_text)))
                     
                     self.conn.commit()
                     print(f"✅ Updated record in DB: {plate_text} | Color: {car_color} | Type: {vehicle_type} | Face: {face_name}")
@@ -657,7 +660,8 @@ class PlateRecognizer:
                         plate_data['location'],
                         plate_data['vehicle_type'],
                         plate_data['face_image_path'],
-                        plate_data['face_name']
+                        plate_data['face_name'],
+                        plate_data.get('security_match', True)  # allow access by default
                     )
                 else:
                     print(f"[DB Queue] Incomplete record - not saved: {plate_data}")
@@ -735,28 +739,27 @@ class PlateRecognizer:
                 
     def check_security_match(self, plate_text, face_name):
         """
-        Verify if the plate-face combination is legitimate by comparing with past records
+        verify kung match ang face and plate using security api
         """
         import requests
-        import json
         
         try:
             response = requests.post(
                 'http://localhost:5000/check_plate',
                 json={'plate_number': plate_text, 'face_name': face_name},
                 headers={'Content-Type': 'application/json'},
-                timeout=3  # Set a timeout to prevent hanging
+                timeout=5
             )
             
             if response.status_code == 200:
                 result = response.json()
-                if not result.get('match', True):
-                    print(f"⚠️ SECURITY ALERT: Plate {plate_text} previously associated with different driver")
-                    return False
-            return True
+                return result.get('match', True)  # if walang 'match' sa response, allow access by default
+            else:
+                print(f"Security API error: {response.status_code} - {response.text}")
+                return True  # allow access if ever mag fail api
         except Exception as e:
             print(f"Error checking security match: {e}")
-            return True  # Default to allowing in case of API failure
+            return True  # allow access if ever mag fail api
 
 
 if __name__ == "__main__":
